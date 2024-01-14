@@ -456,7 +456,7 @@ MOVEDOS:
 	MOV	DS,BX
 	MOV	ES,BX
 	MOV	SS,BX
-	MOV	SP,40H		;Set stack to standard value
+	MOV	SP,5CH		;Set stack to standard value
 	STI			;Enable interrupts
 	XOR	AX,AX
 	PUSH	AX		;Put zero on top of stack for return
