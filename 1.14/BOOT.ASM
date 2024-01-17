@@ -1,4 +1,4 @@
-; Boot sector for 86-DOS version 1.10 and later. Revised 11-25-22.
+; Boot sector for 86-DOS.
 
 	ORG	7C00H
 
@@ -10,7 +10,7 @@
 	DB	"86DOS1.1"	;OEM identifier
 	DW	512		;Sector size
 	DB	1		;Sectors per block
-	DW	1		;Reserved sectors
+	DW	16		;Reserved sectors
 	DB	2		;Number of FATs
 	DW	64		;Number of directory entries
 	DW	320		;Total number of sectors
@@ -24,44 +24,6 @@
 	DS	4		;Volume serial number
 	DB	"NO NAME    "	;Volume label
 	DB	"FAT12   "	;File system ID
-
-;
-; Checks whether the current disk is a system disk
-;
-CHECKSYS:
-	MOV	BX,0		;ES:BX = 0060:0000
-	MOV	CX,4		;Track 0, sector 4
-	MOV	AX,201H		;Function = disk read, sectors = 1
-	INT	13H		;Call disk BIOS service
-	PUSH	DS		;Save DS
-	JC	NOSYS		;Read error
-	MOV	AX,CS
-	MOV	DS,AX		;DS = CS
-;Compare first 2 directory entries
-	MOV	DI,0		;Point to first entry
-	MOV	SI,BIOENTRY	;BIOS name
-	MOV	CX,11		;11 chars to compare
-	CLD			;Clear direction flag
-	REPE
-	CMPSB			;Compare the chars
-	JNZ	NOSYS		;Not IO.SYS
-	MOV	DI,20H		;Point to second entry
-	MOV	SI,DOSENTRY	;DOS name
-	MOV	CX,11		;Compare 11 chars
-	REPE
-	CMPSB			;Compare the chars
-	JNZ	NOSYS		;Not 86DOS.SYS
-	POP	DS		;Restore DS
-	RET
-
-NOSYS:		;Not a system disk, prompt user to retry
-	MOV	SI,NOSYSMSG	;Load not system disk message
-	CALL	PRINT		;Print it
-	MOV	AH,0		;Function = wait and read
-	INT	16H		;Call keyboard BIOS service
-	POP	DS		;Restore DS
-	STC			;Set CF (indicate error)
-	RET
 
 ;
 ; Increments the BX pointer by SI sectors
@@ -98,18 +60,15 @@ INIT:
 	INT	13H		;Call disk BIOS service
 	JC	DSKERR
 
-CHKSYSLOOP:	;Wait until a system disk is inserted
-	CALL	CHECKSYS
-	JC	CHKSYSLOOP
 ;Load the first sector of the BIOS
-	MOV	CX,20		;Sectors to load
+	MOV	CX,4		;Sectors to load
 	PUSH	CX		;Save it
 	MOV	BX,0		;ES:BX = 0060:0000
 	XOR	DX,DX		;Drive 0, head 0
-	MOV	CX,8		;Track 0, sector 8
-	MOV	SI,1		;1 sector will be read the first time
+	MOV	CX,2		;Track 0, sector 2
+	MOV	SI,4		;4 sectors will be read the first time
 	PUSH	SI		;Save it
-	MOV	AL,1		;Read 1 sector
+	MOV	AL,4		;Read 4 sectors
 
 READ:		;Reads some sectors to memory
 	MOV	AH,2		;Function = disk read
@@ -145,7 +104,7 @@ DSKERR:		;Disk read error, boot to ROM BASIC
 	PUSH	AX		;RET will return to BASIC
 
 PRINT:	;Prints a string
-	LODSB			;Fetch char
+	LODB			;Fetch char
 	OR	AL,AL		;Check for zero
 	JZ	PRINTDONE	;Yes, end of string
 	PUSH	SI		;Save SI
@@ -165,29 +124,10 @@ LDBASIC:
 	INT	18H
 
 ;
-; Not a system disk error message
-;
-NOSYSMSG:
-	DB	13,10,"Non-System disk or disk error",13,10
-	DB	"Replace and strike any key when ready",13,10,0
-
-;
 ; Boot failure message
 ;
 BOOTERRMSG:
 	DB	13,10,"Disk Boot failure",13,10,0
-
-;
-; BIOS name
-;
-BIOENTRY:
-	DB	"IO      SYS"
-
-;
-; DOS name
-;
-DOSENTRY:
-	DB	"86DOS   SYS"
 
 	DS	7C00H+512-$-2
 	DB	055H,0AAH	;Boot sector signature

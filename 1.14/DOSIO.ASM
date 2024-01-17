@@ -1,24 +1,93 @@
-; I/O System for 86-DOS version 1.10 and later. Revised 11-25-22.
+; I/O System for 86-DOS version 1.10 and later. Revised 01-17-24.
 
-SECSIZE	EQU	512		;Size of a sector
-DOSSIZE	EQU	10000		;Max length of 86-DOS in bytes
 BIOSSEG	EQU	60H		;BIOS segment for the IBM PC
+
+SPT	EQU	8		;Sectors per track
+STKSIZE	EQU	256		;Stack size for BIOS
 
 	ORG	0
 
+; Remove the "J" to use the default stack. This will improve speed, at the
+; cost of possible stack overflow. Whether stack overflow will happen depends
+; on the PC BIOS ROM revision. It is suggested that you experiment with these
+; to work out the most suitable combination for your PC.
 	JMP	INIT
-	JMP	STATUS
-	JMP	CONIN		;INP
-	JMP	CONOUT		;OUTP
-	JMP	PRINT
-	JMP	AUXIN
-	JMP	AUXOUT
-	JMP	READ
-	JMP	WRITE
-	JMP	DSKCHG
-	JMP	SETDATE
-	JMP	SETTIME
-	JMP	GETDATE
+	JMP	JSTATUS
+	JMP	JCONIN
+	JMP	JCONOUT
+	JMP	JPRINT
+	JMP	JAUXIN
+	JMP	JAUXOUT
+	JMP	JREAD
+	JMP	JWRITE
+	JMP	JDSKCHG
+	JMP	JSETDATE
+	JMP	JSETTIME
+	JMP	JGETDATE
+
+;
+; These are wrappers around actual BIOS calls to ensure that they
+; have enough stack space.
+;
+JSTATUS:
+	SEG	CS
+	MOV	[BIOSCALL],STATUS
+	JMP	CALLFUNC
+
+JCONIN:
+	SEG	CS
+	MOV	[BIOSCALL],CONIN
+	JMP	CALLFUNC
+
+JCONOUT:
+	SEG	CS
+	MOV	[BIOSCALL],CONOUT
+	JMP	CALLFUNC
+
+JPRINT:
+	SEG	CS
+	MOV	[BIOSCALL],PRINT
+	JMP	CALLFUNC
+
+JAUXIN:
+	SEG	CS
+	MOV	[BIOSCALL],AUXIN
+	JMP	CALLFUNC
+
+JAUXOUT:
+	SEG	CS
+	MOV	[BIOSCALL],AUXOUT
+	JMP	CALLFUNC
+
+JREAD:
+	SEG	CS
+	MOV	[BIOSCALL],READ
+	JMP	CALLFUNC
+
+JWRITE:
+	SEG	CS
+	MOV	[BIOSCALL],WRITE
+	JMP	CALLFUNC
+
+JDSKCHG:
+	SEG	CS
+	MOV	[BIOSCALL],DSKCHG
+	JMP	CALLFUNC
+
+JSETDATE:
+	SEG	CS
+	MOV	[BIOSCALL],SETDATE
+	JMP	CALLFUNC
+
+JSETTIME:
+	SEG	CS
+	MOV	[BIOSCALL],SETTIME
+	JMP	CALLFUNC
+
+JGETDATE:
+	SEG	CS
+	MOV	[BIOSCALL],GETDATE
+	JMP	CALLFUNC
 
 ;
 ; Out of paper error message
@@ -240,8 +309,10 @@ AUXOUT:
 ;
 ; DSKCHG - Disk change test
 ;
-; See Programer's Manual for details. AL used as input and AX contains
-; the return value. CF set on error. This is a stub implementation.
+; AL contains the I/O driver number to check. On return, AH contains -1 if the
+; disk has been changed, 0 if it is unknown whether the disk has been changed
+; and 1 if the disk could not have been changed. All registers except for AX
+; must be preserved.
 ;
 DSKCHG:
 	MOV	AH,0		;Clear AH
@@ -397,7 +468,7 @@ INIT:
 	MOV	AX,CS
 	MOV	DS,AX		;DS = CS
 	MOV	SS,AX		;SS = CS
-	MOV	SP,STACKAREA	;Set SP to temp area
+	MOV	SP,STACKAREA	;Set SP to stack area
 	STI			;Enable interrupts
 ;Setup hardware
 	XOR	AH,AH		;Function = reset disk system
@@ -433,37 +504,124 @@ FLPDONE:
 	MOV	DS,AX		;DS = 0
 	MOV	AX,BIOSSEG	;Load BIOS seg
 ;Set BREAK handler
-	MOV	[1BH*4 + 2],AX	;Change INT 1BH seg
-	MOV	[1BH*4],BREAK	;Change INT 1BH address
+	MOV	[6CH+2],AX	;Change INT 1BH seg
+	MOV	[6CH],BREAK	;Change INT 1BH address
 ;Disable all interrupts used for debugging
 	MOV	BX,INTSTUB	;Load stub interrupt address
-	MOV	[01H*4],BX	;Change INT 01H address
-	MOV	[01H*4 + 2],AX	;Change INT 01H seg
-	MOV	[03H*4],BX	;Change INT 03H address
-	MOV	[03H*4 + 2],AX	;Change INT 03H seg
-	MOV	[04H*4],BX	;Change INT 04H address
-	MOV	[04H*4 + 2],AX	;Change INT 04H seg
+	MOV	[04H],BX	;Change INT 01H address
+	MOV	[04H+2],AX	;Change INT 01H seg
+	MOV	[0CH],BX	;Change INT 03H address
+	MOV	[0CH+2],AX	;Change INT 03H seg
+	MOV	[10H],BX	;Change INT 04H address
+	MOV	[10H+2],AX	;Change INT 04H seg
 ;Clear print screen status
 	MOV	AX,50H
 	MOV	DS,AX		;DS = 50H
 	MOV	[00H],0		;Zero print screen flag
-;Move DOS to the end of the BIOS
+;Read DOS to the end of the BIOS
 	PUSH	ES		;Save ES
-	MOV	AX,DOSSEG
-	MOV	ES,AX		;Set ES to DOS seg
-	MOV	CX,DOSSIZE/2	;DOS size in words
+	MOV	AX,CS
+	MOV	DS,AX		;DS = CS
+	MOV	AX,BIOEND
+	ADD	AX,15
+	SHR	AX
+	SHR	AX
+	SHR	AX
+	SHR	AX
+	ADD	AX,BIOSSEG
+	SEG	CS
+	MOV	[DOSSEG],AX	;Compute DOS segment
+	MOV	SI,INITTAB+1	;Load pointer to DPT pointer
+	MOV	SI,[SI]		;Get DPT pointer
+	MOV	AL,0		;Drive 0
+	MOV	BX,BIOEND	;Read to buffer after BIOS
+	MOV	CX,1		;Read 1 sector
+	MOV	DX,[SI+RESSEC]	;First FAT sector
+	PUSH	SI		;Save DPT pointer
+	CALL	READ,BIOSSEG	;Perform read
+	POP	SI		;Restore DPT pointer
+	JNC	CHKOLD		;Check disk read error
+	JMP	DSKERR		;Handle disk error
+
+CHKOLD:
+	CMP	B,[BIOEND],0FFH	;Check for 16-byte dir entries
+	MOV	CX,32		;Default to 32-byte entries
+	JNZ	RDDIR		;31-byte entries, all good
+	SHR	CX		;16-byte entrie, half CX to get 16
+
+RDDIR:
+	MOV	AL,[SI+FATCNT]	;Number of FATs
+	MOV	BL,FATSIZ	;Fat size in sectors
+	MUL	AX,BL		;AX = total fat size
+	MOV	BX,[SI+RESSEC]	;BX = number of reserved sectors
+	ADD	AX,BX		;AX = total sectors before directory
+	MOV	DX,AX		;Read first directory sector
+	MOV	AL,0		;Drive 0
+	PUSH	DX		;Save number of sectors before dir
+	PUSH	CX		;Save directory entry size
+	PUSH	SI		;Save DPT pointer
+	MOV	CX,1		;Read 1 sector
+	MOV	BX,BIOEND	;Read to buffer after BIOS
+	CALL	READ,BIOSSEG	;Perform read
+	JC	CHKERR		;Don't compare name if disk error
+	MOV	DI,BIOEND	;First file name
+	MOV	SI,DOSNAM	;DOS name
+	MOV	CX,11		;11 chars to compare
+	CLD			;Clear direction flag
+	REPE
+	CMPB			;Compare the chars
+	CLC			;Clear disk read error
+
+CHKERR:
+	POP	SI		;Restore DPT pointer
+	POP	CX		;Restore directory entry size
+	POP	DX		;Restore number of sectors before dir
+	JNC	CHKSYS		;Check for disk error
+	JMP	DSKERR		;Handle disk error
+
+CHKSYS:
+	JZ	GETSIZ		;Check missing 86DOS.SYS
+	JMP	DOSERR		;Handle missing DOS
+
+GETSIZ:
+	MOV	DI,1CH		;Default file size field offset
+	CMP	CX,16		;Check for 16-byte entries
+	JNZ	RDDOS		;32-byte entries, all good
+	SUB	DI,15		;Change the offset for 16-byte entries
+
+RDDOS:
+	PUSH	DX		;Save number of sectors before dir
+	MOV	AX,[SI+MAXENT]	;Get number of directory entries
+	MUL	AX,CX		;Get number of directory bytes
+	MOV	CX,[SI+SECSIZ]	;Get sector size
+	DEC	CX
+	ADD	AX,CX
+	ADC	DX,0
+	INC	CX
+	DIV	AX,CX		;AX = number of dir sectors
+	POP	DX		;Restore number of sectors before dir
+	ADD	DX,AX		;DX = first data sector
+	MOV	AX,[BIOEND+DI]	;Get file size in bytes
+	ADD	AX,[SI+SECSIZ]
+	DEC	AX
+	PUSH	DX		;Save DX
+	XOR	DX,DX
+	DIV	AX,[SI+SECSIZ]	;AX = DOS size in sectors
+	POP	DX		;Restore DX
+	MOV	CX,AX		;Read that many sectors
+	MOV	AL,0		;Drive 0
+	MOV	BX,[DOSSEG]
+	MOV	DS,BX
+	XOR	BX,BX		;Read DOS to DOSSEG:0
+	CALL	READ,BIOSSEG	;Perform the read
+	JC	DSKERR		;Check disk error
 	CLD			;Clear DF
-	MOV	AX,OLDSEG
-	MOV	DS,AX		;Set DS to current DOS seg
-	XOR	DI,DI		;ES:DI = DOSSEG:0000
-	MOV	SI,DI		;DS:SI = OLDSEG:0000
-	REP
-	MOVSW			;Copy DOS
 	POP	ES		;Restore ES
 	POP	DS		;Restore DS
 ;Load 86-DOS
 	MOV	SI,INITTAB	;Load drive list pointer
-	CALL	0,DOSSEG	;Call DOS init
+	SEG	CS
+	CALL	L,[DOSADR]	;Call DOS init
 	STI			;Enable interrupts
 	MOV	DX,100H		;DTA = 100H
 	MOV	AH,1AH		;Function = set disk transfer address
@@ -488,28 +646,44 @@ FLPDONE:
 	CMP	AL,1		;Check for EOF
 	JNZ	COMERR		;Error if not end-of-file
 ;Make all segment registers the same
-        CLI                     ;Disable interrupts
+	CLI			;Disable interrupts
 	MOV	DS,BX
 	MOV	ES,BX
 	MOV	SS,BX
 	MOV	SP,5CH		;Set stack to standard value
-        STI                     ;Enable interrupts
+	STI			;Enable interrupts
 	XOR	AX,AX
 	PUSH	AX		;Put zero on top of stack for return
-	MOV	DX,80H	        ;Transfer address
+	MOV	DX,80H		;Transfer address
 	MOV	AH,1AH		;Function = set disk transfer address
 	INT	21H		;Call DOS interrupt
 	PUSH	BX		;Put segment on stack
 	MOV	AX,100H
-	PUSH	AX		;Put address to execute within segment on stack
+	PUSH	AX		;Put address on stack
 	RET	L		;Jump to COMMAND
+
+DSKERR:
+	MOV	DX,BADDSK	;Load disk read failure message
+	JP	OUTPERR
+
+DOSERR:
+	MOV	DX,BADDOS	;Load bad or missing message
+	JP	OUTPERR
 
 COMERR:
 	MOV	DX,BADCOM	;Load bad or missing message
-	CALL	OUTPSTR		;Print it out
+
+OUTPERR:
+	CALL	OUTPSTR		;Print error message
 
 STALL:
 	JP	STALL		;Do nothing forever
+
+;
+; 86-DOS executable file name
+;
+DOSNAM:
+	DB	"86DOS   SYS"
 
 ;
 ; COMMAND.COM FCB
@@ -520,27 +694,26 @@ FCB:
 	DS	25
 
 ;
+; Disk read failure error message
+;
+BADDSK:
+	DB	13,10,"Disk read failure",13,10,0
+
+;
+; Bad or missing 86DOS.SYS error message
+;
+BADDOS:
+	DB	13,10,"Bad or missing Operating System",13,10,0
+
+;
 ; Bad or missing COMMAND.COM error message
 ;
 BADCOM:
 	DB	13,10,"Bad or missing Command Interpreter",13,10,0
 
 ;
-; Explanation of tables below.
-;
-; INITTAB is the initialization table for 86-DOS as described in the
-; 86-DOS Programer's Manual under "Customizing the I/O System."
-;
-; Each Drive Parameter Table (DPT) represent a different drive type,
-; the only DPT for the IBM PC is SSSD8SPT (5.25" 160K SSDD). DPT has
-; the following entries:
-;
-;       SECSIZ    2 bytes       sector size in bytes
-;       CLUSSIZ   1 byte        sectors per allocation unit
-;       RESSEC    2 bytes       reserved sectors
-;       FATCNT    1 byte        number of allocation tables
-;       MAXENT    2 bytes       number of directory entrys
-;       DSKSIZ    2 bytes       number of sectors on the disk
+; Initialization table for 86-DOS as described in the 86-DOS
+; Programer's Manual under "Customizing the I/O System"
 ;
 INITTAB:
 	DB	4		;4 I/O drivers
@@ -554,22 +727,32 @@ INITTAB:
 TABBUF	EQU	0
 TABSTK	EQU	2
 
+FATSIZ	EQU	1		;Size of FAT in sectors
+
 SSDD8SPT:
+DPTOFF	EQU	$
+SECSIZ	EQU	$-DPTOFF
 	DW	512		;512 bytes/sector
+CLUSSIZ	EQU	$-DPTOFF
 	DB	1		;1 sector/allocation unit
-	DW	1		;Reserve 1 boot sector
+RESSEC	EQU	$-DPTOFF
+	DW	16		;Reserve 16 boot sectors
+FATCNT	EQU	$-DPTOFF
 	DB	2		;2 FATs - one for backup
+MAXENT	EQU	$-DPTOFF
 	DW	64		;4 directory sectors
-	DW	40*8		;Tracks * sectors/track = disk size
+DSKSIZ	EQU	$-DPTOFF
+	DW	320		;Tracks * sectors/track = disk size
 
 ;
 ; Init code and data will no longer be needed after BIOS init, so this
 ; area will be used as temp sector buffer. Pad it to the size of a sector
-; so that useful code and data won't be overwritten.
+; if the $-INIT is less than 512, so that useful code and data won't be
+; overwritten. Comment the following line out if $-INIT is greater than
+; 512.
 ;
-	DS	INIT+SECSIZE-$
+;	DS	INIT+512-$
 
-STACKAREA:
 DAYCNT:
 	DW	0
 PRNRETRY:
@@ -579,12 +762,18 @@ LASTCHAR:
 	DB	0
 SNGDRV:
 	DB	0
+DOSADR:
+	DW	0
+DOSSEG:
+	DS	2		;Final 86-DOS segment
+
+
 
 ;
 ; READ - Disk read
 ; WRITE - Disk write
 ;
-; AL contains the I/O driver number, AH contains the verify flag, CX
+; AL contains the I/O driver number, AH contains the directory flag, CX
 ; contains the number of sectors to transfer, DX contains the logical
 ; sector number and DS:BX is the transfer address. CF is set on error,
 ; with error code in AL and CX will contain the number of sectors left.
@@ -606,7 +795,7 @@ DISKIO:		;Main disk transfer logic
 	POP	DS		;DS = CS
 	MOV	[SPSAVE],SP	;Save SP
 	MOV	[DISKOP],AH	;Save function ID
-	CMP	B,[SNGDRV],SNGFLG	;Do we have only one drive?
+	CMP	B,[SNGDRV],1	;Do we have only one drive?
 	JNZ	TRANSINIT	;No
 	PUSH	DS		;Save DS
 	XOR	SI,SI
@@ -649,7 +838,7 @@ TRANSINIT:	;Setup variables and check for 64K limitation
 	SHL	DI
 	SHL	DI
 	ADD	DI,BX		;Result in DI
-	ADD	DI,SECSIZE-1	;Last byte of the sector
+	ADD	DI,512-1	;Last byte of the sector
 	JC	WORKAROUND	;Overflows, first sect crosses 64K boundary
 	XCHG	DI,BX		;BX = ptr to last byte, DI = trans address low
 	SHR	BH		;Number of sectors
@@ -674,11 +863,11 @@ WORKAROUND:	;Workaround for DMA access across 64K boundary
 	CLD			;Ensure incrementing operation
 	PUSH	BX		;Save BX
 	PUSH	ES		;Save ES
-	CMP	B,[DISKOP],RSECT;Check if operation is read
+	CMP	B,[DISKOP],2	;Check if operation is read
 	JZ	RACROSS64K	;Yes, perform read
 	MOV	SI,BX		;Source = BX (transfer address low)
 	PUSH	CX		;Save CX
-	MOV	CX,SECSIZE/2	;Sector length in words
+	MOV	CX,256		;Sector length in words
 	PUSH	ES
 	POP	DS		;DS = ES
 	PUSH	CS
@@ -686,7 +875,7 @@ WORKAROUND:	;Workaround for DMA access across 64K boundary
 	MOV	DI,INIT		;ES:DI = CS:INIT
 	MOV	BX,DI		;Preserve DI before copy
 	REP
-	MOVSW			;Copy sector to temp area in BIOS
+	MOVW			;Copy sector to temp area in BIOS
 	POP	CX		;Restore CX
 	PUSH	CS
 	POP	DS		;DS = CS
@@ -705,13 +894,13 @@ RACROSS64K:	;Read to address that crosses 64K boundaries
 	POP	BX		;Restore BX
 	MOV	DI,BX		;Destination is original BX
 	PUSH	CX		;Save CX
-	MOV	CX,SECSIZE/2	;Sector size in words
+	MOV	CX,256		;Sector size in words
 	REP
-	MOVSW			;Copy sector from temp area to destination
+	MOVW			;Copy sector from temp area to destination
 	POP	CX		;Restore CX
 
 DOREMAINING:	;Transfer sectors after the 64K boundary
-	ADD	BH,SSIZEHI	;Increment by sector size
+	ADD	BH,2		;Increment by sector size
 	POP	AX		;Restore AX
 	CALL	TRANSFER	;Transfer the remaining sectors
 
@@ -763,7 +952,7 @@ ERRLOOKUP:	;Convert to DOS error code and return
 	MOV	CX,10		;10 entries in the table
 	MOV	DI,ERRTABLE	;ES:DI points to the error table
 	REPNE
-	SCASB			;Compare error code
+	SCAB			;Compare error code
 	MOV	AL,[DI+ERRCNT-1];Convert to DOS error code
 	MOV	CX,[SECTLEFT]	;Sectors left
 	MOV	SP,[SPSAVE]	;Restore original SP
@@ -831,21 +1020,88 @@ ERRCNT	EQU	$-ERRTABLE
 	DB	0CH		;Disk error
 
 DISKOP:
-	DB	RSECT		;Disk operation, default to read
+	DB	2		;Disk operation, default to read
 SPSAVE:
 	DW	0		;For saving SP
 SECTLEFT:
 	DW	0		;For number of sectors to read/write
 
-;Compute segment to use for 86-DOS
-DOSSEG	EQU	(($+15)/16)+BIOSSEG
+;
+; BIOS function call helper
+;
+; Move pointer to the BIOS function to BIOSCALL and jump here to perfrom the
+; exact same BIOS call but with a stack of STKSIZE bytes. Use this if there
+; is not enough stack space left.
+;
+CALLFUNC:
+;-------------------- SWITCH TO TEMP STACK --------------------
+	SEG	CS
+	MOV	[AXSAV],AX	;Save AX
+	PUSHF
+	POP	AX		;AX = FLAGS
+	SEG	CS
+	MOV	[FLSAV],AX	;Save flags
+	SEG	CS
+	MOV	[SSSAV],SS	;Save SS
+	SEG	CS
+	MOV	[SPSAV],SP	;Save SP
+	CLI			;Disable interrupts
+	MOV	AX,CS
+	MOV	SS,AX
+	MOV	SP,BIOSSTK	;SS:SP = BIOSSEG:BIOSSTK
+	SEG	CS
+	MOV	AX,[FLSAV]	;AX = FLAGS
+	PUSH	AX
+	POPF			;Restore flags
+	SEG	CS
+	MOV	AX,[AXSAV]	;Restore AX
+;--------------------------------------------------------------
+	PUSH	CS		;Simulate inter-segment call
+	SEG	CS
+	CALL	[BIOSCALL]	;Perform normal call
+;-------------------- SWITCH TO ORIG STACK --------------------
+	SEG	CS
+	MOV	[AXSAV],AX	;Save AX
+	PUSHF
+	POP	AX		;AX = FLAGS
+	SEG	CS
+	MOV	[FLSAV],AX	;Save flags
+	CLI			;Disable interrupts
+	SEG	CS
+	MOV	AX,[SSSAV]
+	MOV	SS,AX		;SS = SSSAV
+	SEG	CS
+	MOV	AX,[SPSAV]
+	MOV	SP,AX		;SP = SPSAV
+	SEG	CS
+	MOV	AX,[FLSAV]	;AX = FLAGS
+	PUSH	AX
+	POPF			;Restore flags
+	SEG	CS
+	MOV	AX,[AXSAV]	;Restore AX
+;--------------------------------------------------------------
+	RET	L
 
-;Compute segment 86-DOS is currently at
-OLDSEG	EQU	((($+SECSIZE-1)/SECSIZE)*SECSIZE/16)+BIOSSEG
+;-------------- END OF INITIALIZED CODE AND DATA --------------
+;--------------    ASSEMBLED BINARY ENDS HERE    --------------
 
-SPT	EQU	8		;Sectors per track
-RSECT	EQU	2		;INT 13H command for read
-WSECT	EQU	3		;INT 13H command for write
-SNGFLG	EQU	1		;Flag for single drive
-SSIZEHI	EQU	SECSIZE/256	;High byte of sector size
+BIOSCALL:
+	DS	2		;For storing BIOS call pointers
+
+;
+; Register save area
+;
+AXSAV:	DS	2
+SSSAV:	DS	2
+SPSAV:	DS	2
+FLSAV:	DS	2
+
+	DS	STKSIZE		;Stack for BIOS calls
+	ALIGN
+BIOSSTK:
+	DS	STKSIZE		;Stack for BIOS/DOS init
+	ALIGN
+STACKAREA:
+
+BIOEND	EQU	$
 

@@ -1,5 +1,5 @@
 ; Disk initialization routine for the IBM PC.
-; Runs on 8086 under 86-DOS.  Revised 11-24-81.
+; Runs on 8086 under 86-DOS.  Revised 01-17-24.
 ;
 ; Translated from the Z80 on 12-19-80 and subsequently modified to init
 ; IBM PC disks.
@@ -48,7 +48,7 @@ CHECKDRIVE:
 	CMP	DH,AL
 	JAE	EACH		; Jump if drive number too big.
 	MOV	DL,DH		; Set DL to drive number.
-	CALL	FMTDSK
+	CALL	FMTDSK		; Format disk.
 	JNC	EACH
 	MOV	AH,OUTSTR
 	MOV	DX,ERRMES
@@ -72,25 +72,21 @@ FMTEACH:
 	INC	AL
 	POP	CX
 	LOOP	FMTEACH
-FMTDONE:
 	RET
 FMTERR:
 	POP	CX
-	JP	FMTDONE
+	JP	RET
+
 ;
 ; Format a track.
 ;
-; This can possibly be turned into a BIOS or DOS function, so we need
-; to ensure that all registers are preserved. This function sets track
-; address fields automatically, all you need is ES:BX with 4 * SPT bytes.
-;
-; AL    - track number
-; AH    - head number
-; CL    - sectors per track
-; CH    - sector size (0 = 128, 1 = 256, 2 = 512, 3 = 1024)
-; DL    - drive number
-; DH    - number of retries on error
-; ES:BX - buffer with 4 * CL bytes
+;     AL    - track number
+;     AH    - head number
+;     CL    - sectors per track
+;     CH    - sector size (0 = 128, 1 = 256, 2 = 512, 3 = 1024)
+;     DL    - drive number
+;     DH    - number of retries on error
+;     ES:BX - buffer with 4 * CL bytes
 ;
 ; On return:
 ;     CF = 0 <= success
@@ -160,6 +156,7 @@ SETERR:
 	JP	TRKDONE
 BAKFLAG:
 	POPF
+	CLC
 TRKDONE:
 	POP	SI
 	POP	DX
@@ -168,14 +165,14 @@ TRKDONE:
 	POP	AX
 	RET
 
-PATTERN:
-	DS	32		; 4*8 bytes.
-
 WARNING:DB	"Completely re-formats any bad disk - "
 	DB	"destroying its contents, of course!",13,10,"$"
 DRVMES:	DB	13,10,"Initialize disk in which drive? $"
 ERRMES:	DB	13,10,10,"ERROR - Not ready or write protected",13,10,"$"
+
 	DS	200H		; Should never overflow again.
 	ALIGN
 STACK:	EQU	$
+
+PATTERN:
 

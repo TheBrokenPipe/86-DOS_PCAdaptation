@@ -510,7 +510,7 @@ SSDD8SPT:
 	DB	4		;FAT size (records)
 	DB	2		;Number of FATs
 	DB	8		;Number of directory records
-	DW	320		;Number of clusters on drive
+	DW	300		;Number of clusters on drive
 
 ;
 ; Init code and data will no longer be needed after BIOS init, so this
